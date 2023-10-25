@@ -120,8 +120,9 @@ process zip_index {
 
 process deepvariant_make_examples {
     container "/oak/stanford/groups/smontgom/jonnguye/sif/deepvariant.sif"
+    containerOptions = "--bind /local/scratch/jonnguye"
     publishDir params.outDir, mode: 'copy'
-    clusterOptions = "--cpus-per-task=1 --mem=8GB --time=2:00:00 --account=smontgom"
+    clusterOptions = "--cpus-per-task=16 --mem=64GB --time=2:00:00 --account=smontgom"
     //queue = "batch"
     maxForks 8
     
@@ -145,33 +146,38 @@ process deepvariant_make_examples {
     path "example_tfrecords/${sample_id}.examples.tfrecord*${total_deepvariant_tasks}.gz", emit: example_tasks
     path "nonvariant_site_tfrecords/${sample_id}.gvcf.tfrecord*${total_deepvariant_tasks}.gz", emit: nonvariant_tasks
 
-   script:
+    script:
+    task_end_index="${task_start_index + tasks_per_shard - 1}"
     """
 set -euo pipefail
 
 mkdir example_tfrecords nonvariant_site_tfrecords
 
 echo "DeepVariant version: \$VERSION"
+echo "Parallel version: \$(parallel --version)"
 
+seq ${task_start_index} ${task_end_index} | parallel \
+	--jobs ${tasks_per_shard} \
+    --halt 2 \
 /opt/deepvariant/bin/make_examples \
---norealign_reads \
---vsc_min_fraction_indels 0.12 \
---pileup_image_width 199 \
---track_ref_reads \
---phase_reads \
---partition_size=25000 \
---max_reads_per_partition=600 \
---alt_aligned_pileup=diff_channels \
---add_hp_channel \
---sort_by_haplotypes \
---parse_sam_aux_fields \
---min_mapping_quality=1 \
---mode calling \
---ref ${reference} \
---reads ${aligned_bam} \
---examples example_tfrecords/${sample_id}.examples.tfrecord@${total_deepvariant_tasks}.gz \
---gvcf nonvariant_site_tfrecords/${sample_id}.gvcf.tfrecord@${total_deepvariant_tasks}.gz \
---task ${task_start_index}
+    --norealign_reads \
+    --vsc_min_fraction_indels 0.12 \
+    --pileup_image_width 199 \
+    --track_ref_reads \
+    --phase_reads \
+    --partition_size=25000 \
+    --max_reads_per_partition=600 \
+    --alt_aligned_pileup=diff_channels \
+    --add_hp_channel \
+    --sort_by_haplotypes \
+    --parse_sam_aux_fields \
+    --min_mapping_quality=1 \
+    --mode calling \
+    --ref ${reference} \
+    --reads ${aligned_bam} \
+    --examples example_tfrecords/${sample_id}.examples.tfrecord@${total_deepvariant_tasks}.gz \
+    --gvcf nonvariant_site_tfrecords/${sample_id}.gvcf.tfrecord@${total_deepvariant_tasks}.gz \
+    --task {}
 
 echo "Complete"
 
@@ -258,6 +264,43 @@ process deepvariant_postprocess_variants{
 	"""
 
 }
+
+process run_deepvariant {
+    container "/oak/stanford/groups/smontgom/jonnguye/sif/deepvariant.sif"
+    containerOptions '--bind /tmp,/local/scratch/jonnguye'
+    publishDir params.outDir, mode: 'copy'
+    clusterOptions = "--cpus-per-task=64 --mem=256GB --time=2:00:00 --account=smontgom"
+    //queue = "batch"
+    maxForks 1
+
+    input:
+    val sample
+    val reference_name
+    path reference
+    path reference_index
+    path bam
+    path bam_index
+
+    output:
+    path "${sample}.${reference_name}.deepvariant.vcf.gz", emit: vcf
+	path "${sample}.${reference_name}.deepvariant.vcf.gz.tbi", emit: vcf_index
+    path "${sample}.${reference_name}.deepvariant.g.vcf.gz", emit: gvcf
+	path "${sample}.${reference_name}.deepvariant.g.vcf.gz.tbi", emit:gvcf_index
+
+
+    shell:
+    """
+    /opt/deepvariant/bin/run_deepvariant \
+    --model_type=PACBIO \
+    --ref=${reference} \
+    --reads=${bam} \
+    --output_vcf="${sample}.${reference_name}.deepvariant.vcf.gz" \
+    --output_gvcf="${sample}.${reference_name}.deepvariant.g.vcf.gz" \
+    --num_shards=32
+    """
+}
+
+
 
 process bcftools_on_deepvariant { 
     container "/oak/stanford/groups/smontgom/jonnguye/sif/bcftools.sif"
@@ -638,16 +681,24 @@ workflow {
     svsig_ch = pbsv_discover(alignedBam_ch.alignedBam, alignedBam_ch.alignedBamIndex, params.reference_tandem_repeat_bed)
     pbsv_vcf_ch = pbsv_call(params.sample, svsig_ch, params.reference, params.reference_index, params.reference_name)
     pbsv_vcf_zip_ch = zip_index(pbsv_vcf_ch)
-    deepvariant_tasks = 64
-    tasks_per_shard = 1 
-    shard_indices = Channel.from(get_shard_indices(deepvariant_tasks, tasks_per_shard))
+    deepvariant_tasks = 128
+    tasks_per_shard = 16
+    shards = 8
+
+    shard_indices = Channel.from(get_shard_indices(shards, tasks_per_shard))
     deepvariant_make_examples_ch = deepvariant_make_examples(params.sample, alignedBam_ch.alignedBam, alignedBam_ch.alignedBamIndex, params.reference, params.reference_index, shard_indices, tasks_per_shard, deepvariant_tasks)
     example_tasks = deepvariant_make_examples_ch.example_tasks.collect()
     nonvariant_tasks = deepvariant_make_examples_ch.nonvariant_tasks.collect()
     deepvariant_calls_ch = deepvariant_call_variants(params.sample, params.reference_name, example_tasks, deepvariant_tasks)
     deepvariant_postprocess_variants_ch = deepvariant_postprocess_variants(params.sample, deepvariant_calls_ch.tfrecord, params.reference, params.reference_index, params.reference_name, nonvariant_tasks, deepvariant_tasks)
     
+
+    //deepvariant_postprocess_variants_ch = run_deepvariant(params.sample, params.reference_name, 
+    //    params.reference, params.reference_index,
+    //    alignedBam_ch.alignedBam, alignedBam_ch.alignedBamIndex)
+
     stats_params = "--apply-filters PASS --samples ${params.sample}"
+
     bcftools_ch = bcftools_on_deepvariant(stats_params, params.reference, params.reference_index, deepvariant_postprocess_variants_ch.vcf, deepvariant_postprocess_variants_ch.vcf_index)
 
     hiphase_ch = hiphase(params.sample, 

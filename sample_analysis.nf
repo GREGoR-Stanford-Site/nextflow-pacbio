@@ -1,30 +1,9 @@
 #!/usr/bin/env nextflow
-
-params.sample = "HG002"
-params.threads = "12"
-params.mem = "96G"
-params.movie_bam = "/oak/stanford/groups/smontgom/jonnguye/old_test_files/HG002/sub_m84011_220902_175841_s1.hifi_reads.bam"
-params.reference = "/oak/stanford/groups/smontgom/jonnguye/ref/pb-wdl-ref/dataset/GRCh38/human_GRCh38_no_alt_analysis_set.fasta"
-params.reference_index = "/oak/stanford/groups/smontgom/jonnguye/ref/pb-wdl-ref/dataset/GRCh38/human_GRCh38_no_alt_analysis_set.fasta.fai"
-params.reference_mmi = "/oak/stanford/groups/smontgom/jonnguye/ref/pb-wdl-ref/dataset/GRCh38/human_GRCh38_no_alt_analysis_set.mmi"
-params.reference_name = "GRCh38"
-params.outDir = "/oak/stanford/groups/smontgom/jonnguye/test_nextflow/output"
-params.reference_tandem_repeat_bed = "/oak/stanford/groups/smontgom/jonnguye/ref/pb-wdl-ref/dataset/GRCh38/human_GRCh38_no_alt_analysis_set.trf.bed"
-params.sex = "MALE"
-params.trgt_reference_tandem_repeat_bed = "/oak/stanford/groups/smontgom/jonnguye/ref/pb-wdl-ref/dataset/GRCh38/trgt/human_GRCh38_no_alt_analysis_set.trgt.v0.3.4.bed"
-params.reference_hificnv_exclude_bed = "/oak/stanford/groups/smontgom/jonnguye/ref/pb-wdl-ref/dataset/GRCh38/hificnv/cnv.excluded_regions.common_50.hg38.bed.gz" 
-params.reference_hificnv_exclude_bed_index = "/oak/stanford/groups/smontgom/jonnguye/ref/pb-wdl-ref/dataset/GRCh38/hificnv/cnv.excluded_regions.common_50.hg38.bed.gz.tbi" 
-params.reference_hificnv_expected_bed_female = "/oak/stanford/groups/smontgom/jonnguye/ref/pb-wdl-ref/dataset/GRCh38/hificnv/female_expected_cn.hg38.bed" 
-params.reference_hificnv_expected_bed_male = "/oak/stanford/groups/smontgom/jonnguye/ref/pb-wdl-ref/dataset/GRCh38/hificnv/male_expected_cn.hg38.bed" 
-
 /*
  * Align sample to reference
  */
 process pbmm2_align {
-    conda 'pbmm2=1.10.0'
-    clusterOptions = "--cpus-per-task=12 --mem=32GB --time=1:00:00 --account=smontgom" 
     publishDir params.outDir, mode: 'copy'
-
 
     input:
     val sample
@@ -37,14 +16,15 @@ process pbmm2_align {
     path "${sample}.${basename}.${reference_name}.aligned.bam", emit:alignedBam
     path "${sample}.${basename}.${reference_name}.aligned.bam.bai", emit: alignedBamIndex
  
+    script:
+    mem_str = "${task.memory}"
+    mem_str = "${mem_str[0..-4]}G"
     """
-    pbmm2 align -j 12 -m 32G --sample $sample --log-level INFO --sort --unmapped $reference_mmi $movie_bam ${sample}.${basename}.${reference_name}.aligned.bam
+    pbmm2 align -j ${task.cpus} -m ${mem_str} --sample $sample --log-level INFO --sort --unmapped $reference_mmi $movie_bam ${sample}.${basename}.${reference_name}.aligned.bam
     """
 }
 
 process extract_read_length_and_qual {
-    conda '/home/jonnguye/micromamba/envs/python3'
-    clusterOptions = "--cpus-per-task=1 --mem=8GB --time=1:00:00 --account=smontgom"
     publishDir params.outDir, mode: 'copy'
 
     input:
@@ -61,8 +41,6 @@ process extract_read_length_and_qual {
 }
 
 process pbsv_discover {
-    conda 'pbsv=2.9.0'
-    clusterOptions = "--cpus-per-task=2 --mem=8GB --time=1:00:00 --account=smontgom"
     publishDir params.outDir, mode: 'copy'
 
     input:
@@ -80,8 +58,6 @@ process pbsv_discover {
 }
 
 process pbsv_call {
-    conda 'pbsv=2.9.0'
-    clusterOptions="--cpus-per-task=8 --mem=64GB --time=1:00:00 --account=smontgom"
     publishDir params.outDir, mode: 'copy'
     
     input:
@@ -95,14 +71,11 @@ process pbsv_call {
     path "${sampleId}.${referenceName}.pbsv.vcf", emit: vcf
 
     """
-    pbsv call --hifi --min-sv-length 20 --num-threads ${params.threads} ${reference} ${svsig} ${sampleId}.${referenceName}.pbsv.vcf
+    pbsv call --hifi --min-sv-length 20 --num-threads ${task.cpus} ${reference} ${svsig} ${sampleId}.${referenceName}.pbsv.vcf
     """
-
 }
 
 process zip_index {
-    conda "htslib=1.18"
-    clusterOptions = "--cpus-per-task=4 --mem=4GB --time=1:00:00 --account=smontgom"
     publishDir params.outDir, mode: 'copy'
 
     input:
@@ -113,24 +86,15 @@ process zip_index {
     path "${vcf.getBaseName()}.vcf.gz.tbi", emit: zipped_vcf_index
 
     """
-    bgzip --threads 4 --stdout ${vcf} > ${vcf.getBaseName()}.vcf.gz
+    bgzip --threads ${task.cpus} --stdout ${vcf} > ${vcf.getBaseName()}.vcf.gz
     tabix --preset vcf ${vcf.getBaseName()}.vcf.gz
     """
 }
 
 process deepvariant_make_examples {
-    container "/oak/stanford/groups/smontgom/jonnguye/sif/deepvariant.sif"
-    containerOptions = "--bind /local/scratch/jonnguye"
     publishDir params.outDir, mode: 'copy'
-    clusterOptions = "--cpus-per-task=16 --mem=64GB --time=2:00:00 --account=smontgom"
-    //queue = "batch"
-    maxForks 8
-    
+
     input:
-    //path(input), path(index), path(intervals)
-    //#path(fasta)
-    //#path(fai)
-    //#path(gzi)
     val sample_id
     path aligned_bam
     path bai
@@ -200,11 +164,7 @@ def get_shard_indices(shards, tasks_per_shard) {
 }
 
 process deepvariant_call_variants{
-    container "/oak/stanford/groups/smontgom/jonnguye/sif/deepvariant.sif"
     publishDir params.outDir, mode: 'copy'
-    clusterOptions = "--cpus-per-task=16 --mem=64GB --time=4:00:00 --account=smontgom"
-    //queue = "batch"
-    maxForks 1
     
     input:
     val sample_id
@@ -225,16 +185,13 @@ process deepvariant_call_variants{
 	/opt/deepvariant/bin/call_variants \
 		--outfile "${sample_id}.${reference_name}.call_variants_output.tfrecord.gz" \
 		--examples "${sample_id}.examples.tfrecord@${total_deepvariant_tasks}.gz" \
-		--checkpoint "\${deepvariant_model_path}"
+		--checkpoint "\${deepvariant_model_path}" \
+        --num_readers "${task.cpus}"
     """
 }
 
 process deepvariant_postprocess_variants{
-    container "/oak/stanford/groups/smontgom/jonnguye/sif/deepvariant.sif"
     publishDir params.outDir, mode: 'copy'
-    clusterOptions = "--cpus-per-task=2 --mem=32GB --time=2:00:00 --account=smontgom"
-    //queue = "batch"
-    maxForks 1
     
     input:
     val sample_id
@@ -251,7 +208,6 @@ process deepvariant_postprocess_variants{
     path "${sample_id}.${reference_name}.deepvariant.g.vcf.gz", emit: gvcf
 	path "${sample_id}.${reference_name}.deepvariant.g.vcf.gz.tbi", emit:gvcf_index
 
-   
     script:
     """
     /opt/deepvariant/bin/postprocess_variants \
@@ -266,12 +222,7 @@ process deepvariant_postprocess_variants{
 }
 
 process run_deepvariant {
-    container "/oak/stanford/groups/smontgom/jonnguye/sif/deepvariant.sif"
-    containerOptions '--bind /tmp,/local/scratch/jonnguye'
     publishDir params.outDir, mode: 'copy'
-    clusterOptions = "--cpus-per-task=64 --mem=256GB --time=2:00:00 --account=smontgom"
-    //queue = "batch"
-    maxForks 1
 
     input:
     val sample
@@ -296,17 +247,12 @@ process run_deepvariant {
     --reads=${bam} \
     --output_vcf="${sample}.${reference_name}.deepvariant.vcf.gz" \
     --output_gvcf="${sample}.${reference_name}.deepvariant.g.vcf.gz" \
-    --num_shards=32
+    --num_shards=${tasks.cpus}
     """
 }
 
-
-
 process bcftools_on_deepvariant { 
-    container "/oak/stanford/groups/smontgom/jonnguye/sif/bcftools.sif"
     publishDir params.outDir, mode: 'copy'
-    clusterOptions = "--cpus-per-task=2 --mem=8GB --time=2:00:00 --account=smontgom"
-    //queue = "batch"
     
     input:
     val stats_params
@@ -314,7 +260,6 @@ process bcftools_on_deepvariant {
     path reference_index
     path vcf
     path vcf_index
-
 
     output:
     path "${vcf.simpleName}.vcf.stats.txt", emit: stats
@@ -327,16 +272,14 @@ set -euo pipefail
 bcftools --version
 
 bcftools stats \
---threads 1 \
+--threads ${task.cpus - 1} \
 ${stats_params} \
 --fasta-ref ${reference} \
 ${vcf} \
 > ${vcf.simpleName}.vcf.stats.txt
 
-echo "STATS"
-
 bcftools roh \
---threads 1 \
+--threads ${task.cpus - 1} \
 --AF-dflt 0.4 \
 ${vcf} \
 > ${vcf.simpleName}.bcftools_roh.out
@@ -355,10 +298,7 @@ echo "ROH_STATS"
 }
 
 process hiphase {
-    container "/oak/stanford/groups/smontgom/jonnguye/sif/hiphase.sif"
     publishDir params.outDir, mode: 'copy'
-    clusterOptions = "--cpus-per-task=16 --mem=64GB --time=2:00:00 --account=smontgom"
-    //queue = "batch"
     
     input:
     val sample 
@@ -391,7 +331,7 @@ process hiphase {
     #// for future use with joint calling
     #// String haplotags_param = if length(haplotagged_bam_names) > 0 then "--haplotag-file ~{id}.~{refname}.hiphase.haplotags.tsv" else ""
 	
-hiphase --threads 16 \
+hiphase --threads ${task.cpus} \
 --sample-name ${sample} \
 --vcf ${deepvariant_vcf} \
 --vcf ${pbsv_vcf} \
@@ -404,17 +344,13 @@ hiphase --threads 16 \
 --blocks-file ${sample}.${reference_name}.hiphase.blocks.tsv \
 --global-realignment-cputime 300
 
-bcftools index --tbi --threads 15 "${sample}.deepvariant.phased.vcf.gz" 
-bcftools index --tbi --threads 15 "${sample}.pbsv.phased.vcf.gz"
-
+bcftools index --tbi --threads "${task.cpus - 1}" "${sample}.deepvariant.phased.vcf.gz" 
+bcftools index --tbi --threads "${task.cpus - 1}" "${sample}.pbsv.phased.vcf.gz"
     """
 }
 
 process mosdepth {
-    container "/oak/stanford/groups/smontgom/jonnguye/sif/mosdepth.sif"
     publishDir params.outDir, mode: 'copy'
-    clusterOptions = "--cpus-per-task=4 --mem=8GB --time=2:00:00 --account=smontgom"
-    //queue = "batch"
     
     input:
     path aligned_bam
@@ -431,7 +367,7 @@ set -euo pipefail
 mosdepth --version
 
 mosdepth \
---threads 3 \
+--threads "${task.cpus - 1}" \
 --by 500 \
 --no-per-base \
 --use-median \
@@ -441,10 +377,7 @@ ${aligned_bam}
 }
 
 process trgt {
-    container "/oak/stanford/groups/smontgom/jonnguye/sif/trgt.sif"
     publishDir params.outDir, mode: 'copy'
-    clusterOptions = "--cpus-per-task=4 --mem=8GB --time=2:00:00 --account=smontgom"
-    //queue = "batch"
     
     input:
     val sex
@@ -471,7 +404,7 @@ set -euo pipefail
 trgt --version
 
 trgt\
- --threads 4 \
+ --threads ${task.cpus} \
  --karyotype ${karyotype} \
  --genome ${reference} \
  --repeats ${tandem_repeat_bed} \
@@ -482,10 +415,7 @@ trgt\
 }
 
 process sort_trgt_vcf {
-    conda "/home/jonnguye/micromamba/envs/common"
     publishDir params.outDir, mode: 'copy'
-    clusterOptions = "--cpus-per-task=4 --mem=8GB --time=2:00:00 --account=smontgom"
-    //queue = "batch"
     
     input:
     path vcf 
@@ -501,15 +431,12 @@ process sort_trgt_vcf {
     trimmed_name=\${trimmed_name%.vcf.gz}
     echo \$trimmed_name
     bcftools sort --output-type z --output "\${trimmed_name}.sorted.vcf.gz" "${vcf}"
-    bcftools index --threads 3 --tbi "\${trimmed_name}.sorted.vcf.gz"
+    bcftools index --threads "${task.cpus - 1}" --tbi "\${trimmed_name}.sorted.vcf.gz"
 """
 }
 
 process sort_trgt_bam {
-    conda "/home/jonnguye/micromamba/envs/common"
     publishDir params.outDir, mode: 'copy'
-    clusterOptions = "--cpus-per-task=4 --mem=8GB --time=2:00:00 --account=smontgom"
-    //queue = "batch"
     
     input:
     path bam 
@@ -521,15 +448,13 @@ process sort_trgt_bam {
     script:
     """
 samtools --version
-samtools sort -@ 3 -o "${bam.baseName}.sorted.bam" ${bam}
-samtools index -@ 3 "${bam.baseName}.sorted.bam"
+samtools sort -@ "${task.cpus}" -o "${bam.baseName}.sorted.bam" ${bam}
+samtools index -@ "${task.cpus}" "${bam.baseName}.sorted.bam"
     """
 }
 
 
 process coverage_dropouts {
-    conda '/home/jonnguye/micromamba/envs/python3'
-    clusterOptions = "--cpus-per-task=2 --mem=8GB --time=1:00:00 --account=smontgom"
     publishDir params.outDir, mode: 'copy'
 
     input:
@@ -553,8 +478,6 @@ set -euo pipefail
 }
 
 process cpg_pileup {
-    container "/oak/stanford/groups/smontgom/jonnguye/sif/pb-cpg-tools.sif"
-    clusterOptions = "--cpus-per-task=12 --mem=48GB --time=1:00:00 --account=smontgom"
     publishDir params.outDir, mode: 'copy'
     
     input:
@@ -576,7 +499,7 @@ process cpg_pileup {
 	aligned_bam_to_cpg_scores --version
 
 	aligned_bam_to_cpg_scores \
-    --threads 12 \
+    --threads "${task.cpus}" \
 	--bam ${bam} \
 	--ref ${reference} \
 	--output-prefix "${sample}.${reference_name}"  \
@@ -587,8 +510,6 @@ process cpg_pileup {
 }
 
 process paraphase {
-    container "/oak/stanford/groups/smontgom/jonnguye/sif/paraphase.sif"
-    clusterOptions = "--cpus-per-task=4 --mem=8GB --time=1:00:00 --account=smontgom"
     publishDir params.outDir, mode: 'copy'
 
     input:
@@ -611,7 +532,7 @@ process paraphase {
 	paraphase --version
 
 	paraphase \
-		--threads 4 \
+		--threads ${task.cpus} \
 		--bam ${bam} \
 		--reference ${reference} \
 		--out "${sample}.paraphase"
@@ -619,8 +540,6 @@ process paraphase {
 }
 
 process hificnv{
-    container "/oak/stanford/groups/smontgom/jonnguye/sif/hificnv.sif"
-    clusterOptions = "--cpus-per-task=8 --mem=16GB --time=1:00:00 --account=smontgom"
     publishDir params.outDir, mode: 'copy'
 
     input:
@@ -658,7 +577,7 @@ process hificnv{
 	hificnv --version
 
 	hificnv \
-		--threads 8 \
+		--threads "${task.cpus}" \
 		--bam ${bam} \
 		--ref ${reference} \
 		--maf ${phased_vcf} \

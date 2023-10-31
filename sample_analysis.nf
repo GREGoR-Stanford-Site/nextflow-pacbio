@@ -20,7 +20,7 @@ process pbmm2_align {
     mem_str = "${task.memory}"
     mem_str = "${mem_str[0..-4]}G"
     """
-    pbmm2 align -j ${task.cpus} -m ${mem_str} --sample $sample --log-level INFO --sort --unmapped $reference_mmi $movie_bam ${sample}.${basename}.${reference_name}.aligned.bam
+    pbmm2 align -j ${task.cpus} -m 8G --sample $sample --log-level INFO --sort --unmapped $reference_mmi $movie_bam ${sample}.${basename}.${reference_name}.aligned.bam
     """
 }
 
@@ -40,20 +40,37 @@ process extract_read_length_and_qual {
     """
 }
 
-process pbsv_discover {
+process pbsv_split {
     publishDir params.outDir, mode: 'copy'
+    
+    input:
+    path alignedBam
+
+    output:
+    path "regions.txt", emit: regions_file
+
+    shell:
+    """
+    samtools view -H "${alignedBam}" | grep '^@SQ' | cut -f2 | cut -d':' -f2 > regions.txt
+    """
+}
+
+process pbsv_discover {
+    //publishDir params.outDir, mode: 'copy'
+    maxForks 8
 
     input:
     path alignedBam
     path alignedBamIndex
     path reference_tandem_repeat_bed
+    val region
 
     output:
-    path "${alignedBam.getBaseName()}.svsig.gz"
+    path "${alignedBam.getBaseName()}.*.svsig.gz"
 
     script:
     """
-    pbsv discover --log-level INFO  --hifi --tandem-repeats ${reference_tandem_repeat_bed} ${alignedBam} ${alignedBam.getBaseName()}.svsig.gz
+    pbsv discover --log-level INFO  --hifi --region ${region} --tandem-repeats ${reference_tandem_repeat_bed} ${alignedBam} ${alignedBam.getBaseName()}.${region}.svsig.gz
     """
 }
 
@@ -63,6 +80,7 @@ process pbsv_call {
     input:
     val sampleId
     path svsig
+    path alignedBam
     path reference
     path referenceIndex
     val referenceName
@@ -71,7 +89,7 @@ process pbsv_call {
     path "${sampleId}.${referenceName}.pbsv.vcf", emit: vcf
 
     """
-    pbsv call --hifi --min-sv-length 20 --num-threads ${task.cpus} ${reference} ${svsig} ${sampleId}.${referenceName}.pbsv.vcf
+    pbsv call --hifi --min-sv-length 20 --num-threads ${task.cpus} ${reference} ${alignedBam.getBaseName()}.*.svsig.gz ${sampleId}.${referenceName}.pbsv.vcf
     """
 }
 
@@ -92,7 +110,7 @@ process zip_index {
 }
 
 process deepvariant_make_examples {
-    publishDir params.outDir, mode: 'copy'
+    //publishDir params.outDir, mode: 'copy'
 
     input:
     val sample_id
@@ -314,9 +332,7 @@ process hiphase {
 
     output:
     path "${sample}.deepvariant.phased.vcf.gz", emit: deepvariant_phased_vcf
-    path "${sample}.deepvariant.phased.vcf.gz.tbi", emit: deepvariant_phased_vcf_index
     path "${sample}.pbsv.phased.vcf.gz", emit: pbsv_phased_vcf 
-    path "${sample}.pbsv.phased.vcf.gz.tbi", emit: pbsv_phased_vcf_index 
     path "${sample}.${aligned_bam.baseName}.haplotagged.bam", emit: haplotagged_bam
     path "${sample}.${aligned_bam.baseName}.haplotagged.bam.bai", emit: haplotagged_bam_index
     path "${sample}.${reference_name}.hiphase.stats.tsv" 
@@ -343,9 +359,24 @@ hiphase --threads ${task.cpus} \
 --summary-file ${sample}.${reference_name}.hiphase.stats.tsv \
 --blocks-file ${sample}.${reference_name}.hiphase.blocks.tsv \
 --global-realignment-cputime 300
+    """
+}
 
-bcftools index --tbi --threads "${task.cpus - 1}" "${sample}.deepvariant.phased.vcf.gz" 
-bcftools index --tbi --threads "${task.cpus - 1}" "${sample}.pbsv.phased.vcf.gz"
+process index_phased_data {
+    publishDir params.outDir, mode: 'copy'
+
+    input:
+    path deepvariant_vcf
+    path pbsv_vcf
+
+    output:
+    path "${deepvariant_vcf}.tbi", emit: pbsv_phased_vcf_index 
+    path "${pbsv_vcf}.tbi", emit: deepvariant_phased_vcf_index
+
+    script:
+    """
+    bcftools index --tbi --threads "${task.cpus - 1}" ${deepvariant_vcf} 
+    bcftools index --tbi --threads "${task.cpus - 1}" ${pbsv_vcf} 
     """
 }
 
@@ -557,8 +588,7 @@ process hificnv{
     path expected_bed_female
 
     output:
-    path "hificnv.${sample}.vcf.gz"
-    path "hificnv.${sample}.vcf.gz.tbi"
+    path "hificnv.${sample}.vcf.gz", emit:hifivcf
     path "hificnv.${sample}.copynum.bedgraph"
     path "hificnv.${sample}.depth.bw"
     path "hificnv.${sample}.maf.bw"
@@ -584,8 +614,21 @@ process hificnv{
 		--exclude ${exclude_bed} \
 		--expected-cn ${expected_bed} \
 		--output-prefix hificnv 
+    """
+}
 
-	bcftools index --tbi "hificnv.${sample}.vcf.gz"
+process index_hificnv{
+    publishDir params.outDir, mode: 'copy'
+    
+    input:
+    path hificnv_vcf
+    
+    output:
+    path "${hificnv_vcf}.tbi"
+
+    script:
+    """
+	bcftools index --tbi ${hificnv_vcf}
     """
 }
 
@@ -597,8 +640,11 @@ workflow {
     basename = file(params.movie_bam).getBaseName()
     alignedBam_ch = pbmm2_align(params.sample, params.movie_bam, basename, params.reference_mmi, params.reference_name) 
     extract_read_length_and_qual(params.movie_bam, params.sample, basename)
-    svsig_ch = pbsv_discover(alignedBam_ch.alignedBam, alignedBam_ch.alignedBamIndex, params.reference_tandem_repeat_bed)
-    pbsv_vcf_ch = pbsv_call(params.sample, svsig_ch, params.reference, params.reference_index, params.reference_name)
+
+    splitBam_ch = pbsv_split(alignedBam_ch.alignedBam)
+    splitBam_ch.regions_file.splitText()
+    svsig_ch = pbsv_discover(alignedBam_ch.alignedBam, alignedBam_ch.alignedBamIndex, params.reference_tandem_repeat_bed, splitBam_ch.regions_file.splitText().map{it -> it.trim()})
+    pbsv_vcf_ch = pbsv_call(params.sample, svsig_ch.collect(), alignedBam_ch.alignedBam, params.reference, params.reference_index, params.reference_name)
     pbsv_vcf_zip_ch = zip_index(pbsv_vcf_ch)
     deepvariant_tasks = 128
     tasks_per_shard = 16
@@ -626,6 +672,7 @@ workflow {
         alignedBam_ch.alignedBam, alignedBam_ch.alignedBamIndex,
         params.reference, params.reference_index, params.reference_name
     )
+    index_phased_ch = index_phased_data(hiphase_ch.deepvariant_phased_vcf, hiphase_ch.pbsv_phased_vcf)
 
     mosdepth_ch = mosdepth(hiphase_ch.haplotagged_bam, hiphase_ch.haplotagged_bam_index)
     trgt_ch = trgt(params.sex, params.reference, params.reference_index, params.trgt_reference_tandem_repeat_bed, hiphase_ch.haplotagged_bam, hiphase_ch.haplotagged_bam_index)
@@ -637,10 +684,46 @@ workflow {
         params.reference, params.reference_index)    
     paraphase(params.sample, hiphase_ch.haplotagged_bam, hiphase_ch.haplotagged_bam_index,
         params.reference, params.reference_index)
-    hificnv(params.sample, params.sex, hiphase_ch.haplotagged_bam, hiphase_ch.haplotagged_bam_index,
-        hiphase_ch.deepvariant_phased_vcf, hiphase_ch.deepvariant_phased_vcf_index,
+    hificnv_ch = hificnv(params.sample, params.sex, hiphase_ch.haplotagged_bam, hiphase_ch.haplotagged_bam_index,
+        hiphase_ch.deepvariant_phased_vcf, index_phased_ch.deepvariant_phased_vcf_index,
         params.reference, params.reference_index,
         params.reference_hificnv_exclude_bed, params.reference_hificnv_exclude_bed_index,
         params.reference_hificnv_expected_bed_male, params.reference_hificnv_expected_bed_female
     )
+    index_hificnv(hificnv_ch.hifivcf)
 }
+
+workflow.onComplete {
+    def msg = ""
+    if (workflow.success){
+        msg = """\
+        Pipeline execution summary
+        ---------------------------
+        Completed at: ${workflow.complete}
+        Duration	: ${workflow.duration}
+        Success		: ${workflow.success}
+        outDir		: ${params.outDir}
+        exit status	: ${workflow.exitStatus}
+        Git info	: $workflow.repository - $workflow.revision [$workflow.commitId]"
+        """
+        .stripIndent()
+        
+        sendMail(to: 'jonnguye@stanford.edu', subject: "PipelineAlert: ${params.sample} Complete", body: msg)
+    }
+    else{
+
+        msg = """\
+        Error Summary
+        ---------------------------
+        Success	 	: ${workflow.success}
+        ErrMessage	: ${workflow.errorMessage}
+        workDir		: ${workflow.workDir}
+        exit status	: ${workflow.exitStatus}
+        Git info	: $workflow.repository - $workflow.revision [$workflow.commitId]"
+        """
+        .stripIndent()
+
+        sendMail(to: 'jonnguye@stanford.edu', subject: "PipelineAlert: ${params.sample} Error", body: msg)
+    }
+}
+

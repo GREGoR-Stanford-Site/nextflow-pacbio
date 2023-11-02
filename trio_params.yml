@@ -1,0 +1,30 @@
+child_id: "HG002"
+child_sex: "MALE"
+aligned_child_bam: "/oak/stanford/groups/smontgom/jonnguye/repos/nextflow-pacbio/output/HG002.sub_m84011_220902_175841_s1.hifi_reads.GRCh38.aligned.bam" 
+aligned_child_bam_index: "/oak/stanford/groups/smontgom/jonnguye/repos/nextflow-pacbio/output/HG002.sub_m84011_220902_175841_s1.hifi_reads.GRCh38.aligned.bam.bai"
+
+parent_id_1: "HG003"
+parent_sex_1: "MALE"
+aligned_parent_bam_1: "/oak/stanford/groups/smontgom/jonnguye/repos/nextflow-pacbio/output/HG003/HG003.sub_m84010_220919_235306_s2.hifi_reads.GRCh38.aligned.bam" 
+aligned_parent_bam_index_1: "/oak/stanford/groups/smontgom/jonnguye/repos/nextflow-pacbio/output/HG003/HG003.sub_m84010_220919_235306_s2.hifi_reads.GRCh38.aligned.bam.bai"
+
+parent_id_2: "HG004"
+parent_sex_2: "FEMALE"
+aligned_parent_bam_2: "/oak/stanford/groups/smontgom/jonnguye/repos/nextflow-pacbio/output/HG004.sub_m84010_220919_232145_s1.hifi_reads.GRCh38.aligned.bam"
+aligned_parent_bam_index_2: "/oak/stanford/groups/smontgom/jonnguye/repos/nextflow-pacbio/output/HG004.sub_m84010_220919_232145_s1.hifi_reads.GRCh38.aligned.bam.bai"
+
+family_id: "ASH_JEW"
+
+outDir: "/oak/stanford/groups/smontgom/jonnguye/repos/nextflow-pacbio-develop/output"
+
+reference: "/oak/stanford/groups/smontgom/jonnguye/ref/pb-wdl-ref/dataset/GRCh38/human_GRCh38_no_alt_analysis_set.fasta"
+reference_index: "/oak/stanford/groups/smontgom/jonnguye/ref/pb-wdl-ref/dataset/GRCh38/human_GRCh38_no_alt_analysis_set.fasta.fai"
+reference_mmi: "/oak/stanford/groups/smontgom/jonnguye/ref/pb-wdl-ref/dataset/GRCh38/human_GRCh38_no_alt_analysis_set.mmi"
+reference_name: "GRCh38"
+
+reference_tandem_repeat_bed: "/oak/stanford/groups/smontgom/jonnguye/ref/pb-wdl-ref/dataset/GRCh38/human_GRCh38_no_alt_analysis_set.trf.bed"
+trgt_reference_tandem_repeat_bed: "/oak/stanford/groups/smontgom/jonnguye/ref/pb-wdl-ref/dataset/GRCh38/trgt/human_GRCh38_no_alt_analysis_set.trgt.v0.3.4.bed"
+reference_hificnv_exclude_bed: "/oak/stanford/groups/smontgom/jonnguye/ref/pb-wdl-ref/dataset/GRCh38/hificnv/cnv.excluded_regions.common_50.hg38.bed.gz" 
+reference_hificnv_exclude_bed_index: "/oak/stanford/groups/smontgom/jonnguye/ref/pb-wdl-ref/dataset/GRCh38/hificnv/cnv.excluded_regions.common_50.hg38.bed.gz.tbi" 
+reference_hificnv_expected_bed_female: "/oak/stanford/groups/smontgom/jonnguye/ref/pb-wdl-ref/dataset/GRCh38/hificnv/female_expected_cn.hg38.bed" 
+reference_hificnv_expected_bed_male: "/oak/stanford/groups/smontgom/jonnguye/ref/pb-wdl-ref/dataset/GRCh38/hificnv/male_expected_cn.hg38.bed" 
